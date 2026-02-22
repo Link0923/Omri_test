@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Test for Omri</title>
+  
+  <style>
+    html,
+    body,
+    #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
+    
+    #layerToggleBtn {
+      position: absolute;
+      top: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 99;
+      padding: 10px 20px;
+      background-color: rgb(241, 8, 8);
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+    
+    #layerToggleBtn:hover {
+      background-color: #f0f0f0;
+    }
+  </style>
+  
+  <link rel="stylesheet" href="https://js.arcgis.com/4.28/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.28/"></script>
+  
+  <script>
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/widgets/BasemapToggle",
+      "esri/widgets/ScaleBar",
+      "esri/widgets/Search",
+      "esri/layers/GeoJSONLayer",
+      "esri/layers/GraphicsLayer",
+      "esri/Graphic"
+    ], function(Map, MapView, BasemapToggle, ScaleBar, Search, GeoJSONLayer, GraphicsLayer, Graphic) {
+      
+      // Create a new map with a topographic basemap
+      const map = new Map({
+        basemap: "topo-vector"
+      });
+      
+      // Create a graphics layer for search pins
+      const pinsLayer = new GraphicsLayer({
+        title: "Search Pins"
+      });
+      map.add(pinsLayer);
+      
+      // Create a MapView and set it to San Francisco
+      const view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [-122.4194, 37.7749], // San Francisco coordinates
+        zoom: 12
+      });
+      
+      // Variable to store the layer
+      let sanFranLayer = null;
+      let layerVisible = false;
+      
+      // GeoJSON URL from GitHub (using media.githubusercontent.com for LFS files)
+      const geojsonUrl = "https://media.githubusercontent.com/media/Link0923/Omri_test/main/San_Fransisco_to_test2.geojson";
+      
+      // Create the GeoJSON layer (but don't add to map yet)
+      sanFranLayer = new GeoJSONLayer({
+        url: geojsonUrl,
+        visible: false,
+        renderer: {
+          type: "simple",
+          symbol: {
+            type: "simple-fill",
+            color: [51, 51, 204, 0.5],
+            outline: {
+              color: [255, 255, 255, 0.5],
+              width: 0.5
+            }
+          }
+        },
+        popupTemplate: {
+          title: "Building Info",
+          content: [
+            {
+              type: "fields",
+              fieldInfos: [
+                {
+                  fieldName: "Roofing_Squares",
+                  label: "Roofing Squares",
+                  format: {
+                    places: 2,
+                    digitSeparator: true
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      });
+      
+      // Add layer to map
+      map.add(sanFranLayer);
+      
+      // Button toggle function
+      window.toggleLayer = function() {
+        const btn = document.getElementById('layerToggleBtn');
+        
+        if (sanFranLayer) {
+          layerVisible = !layerVisible;
+          sanFranLayer.visible = layerVisible;
+          btn.textContent = layerVisible ? 'Hide SF Layer' : 'Show SF Layer';
+        }
+      };
+      
+      // Add a basemap toggle widget
+      const basemapToggle = new BasemapToggle({
+        view: view,
+        nextBasemap: "satellite"
+      });
+      view.ui.add(basemapToggle, "bottom-right");
+      
+      // Add a scale bar
+      const scaleBar = new ScaleBar({
+        view: view,
+        unit: "dual"
+      });
+      view.ui.add(scaleBar, "bottom-left");
+      
+      // Add a search widget
+      const searchWidget = new Search({
+        view: view
+      });
+      view.ui.add(searchWidget, "top-right");
+      
+      // Listen for when a search result is selected
+      searchWidget.on("select-result", function(event) {
+        // Clear any existing pins
+        pinsLayer.removeAll();
+        
+        // Get the location from the search result
+        const location = event.result.feature.geometry;
+        
+        // Create a red pin graphic
+        const pinGraphic = new Graphic({
+          geometry: location,
+          symbol: {
+            type: "simple-marker",
+            color: [255, 0, 0],  // Red color
+            size: "16px",
+            outline: {
+              color: [255, 255, 255],
+              width: 2
+            },
+            style: "circle"
+          }
+        });
+        
+        // Add the pin to the graphics layer
+        pinsLayer.add(pinGraphic);
+        
+        // Query for the nearest GeoJSON feature
+        if (sanFranLayer) {
+          // Create a query to find features near the pin location
+          const query = sanFranLayer.createQuery();
+          query.geometry = location;
+          query.distance = 500; // Search within 500 meters
+          query.units = "meters";
+          query.spatialRelationship = "intersects";
+          query.returnGeometry = true;
+          query.outFields = ["*"];
+          
+          sanFranLayer.queryFeatures(query).then(function(results) {
+            if (results.features.length > 0) {
+              // Find the closest feature by calculating distance
+              let nearestFeature = results.features[0];
+              let minDistance = Number.MAX_VALUE;
+              
+              results.features.forEach(function(feature) {
+                const distance = Math.sqrt(
+                  Math.pow(feature.geometry.centroid.x - location.x, 2) +
+                  Math.pow(feature.geometry.centroid.y - location.y, 2)
+                );
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  nearestFeature = feature;
+                }
+              });
+              
+              // Create a highlight graphic for the selected building
+              const highlightGraphic = new Graphic({
+                geometry: nearestFeature.geometry,
+                symbol: {
+                  type: "simple-fill",
+                  color: [255, 255, 0, 0.6],  // Yellow highlight
+                  outline: {
+                    color: [255, 0, 0],
+                    width: 2
+                  }
+                }
+              });
+              
+              // Add highlight to pins layer (will be cleared on next search)
+              pinsLayer.add(highlightGraphic);
+              
+              // Open the popup at the pin location
+              view.popup.open({
+                features: [nearestFeature],
+                location: location
+              });
+            } else {
+              console.log("No features found within 500 meters");
+            }
+          }).catch(function(error) {
+            console.error("Error querying features:", error);
+          });
+        }
+      });
+      
+    });
+  </script>
+</head>
+<body>
+  <button id="layerToggleBtn" onclick="toggleLayer()">Show SF Layer</button>
+  <div id="viewDiv"></div>
+</body>
+</html>
